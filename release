@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+
+#-------------------------------------------------------------------------------
+# Version 1.0.0
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# Copyright 2018 Brightcove
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# This script depends on git being installed and a properties files
+# with some environment vars.
+#
+# Define a properties file like so:
+# export PROP_FILE  := build.properties
+#
+# build.properties needs the following variables defined in them:
+#
+# VERSION=1.0.0-SNAPSHOT
+# REPO_URL=https://github.com/brightcove/buildsrc
+#-------------------------------------------------------------------------------
+
+##
+# Utility function to exit with a failure message.
+#
+# Params:
+#   $1 - Message to output before exiting
+##
+die() {
+  echo "$1"
+  exit 1
+}
+
+##
+# Prompt the user for a new version which is then used.
+#
+# The new version is updated in $PROP_FILE and that file is then
+# re-sourced to update the running environment.
+#
+# Params:
+#   $1 - The text prompt to display to the user.
+#   $2 - The default version to display and use if nothing is entered.
+#
+# Externals:
+#   PROP_FILE, VERSION
+# Outputs:
+#   VERSION will be updated to reflect new value.
+##
+update_version() {
+  prompt=$1
+  v=$2
+
+  [[ "${BRANCH_RELEASE}" ]] && prompt="(BRANCH) $prompt"
+
+  temp="${PROP_FILE}.release"
+  [[ -f "${temp}" ]] && die "$temp file already exists. Remove if stale"
+
+  read -p "$prompt [$v]:" update_version_in
+  NEW_VERSION=${update_version_in:-$v}
+  [[ "${BRANCH_RELEASE}" ]] && NEW_VERSION="${NEW_VERSION}-BRANCH"
+
+  sed "s/^VERSION=.*$/VERSION=${NEW_VERSION}/" "$PROP_FILE" > "$temp"
+  mv "$temp" "$PROP_FILE"
+  source "$PROP_FILE"
+}
+
+##
+# Cut and push post-release version
+#
+# Externals:
+#     VERSION, PROP_FILE
+##
+postrelease_version() {
+  (( new_micro="${VERSION##*.}" + 1 ))
+  update_version "Post-release version" \
+    "${VERSION%.*}.${new_micro}-SNAPSHOT"
+  $GIT_BIN add "$PROP_FILE"
+  $GIT_BIN commit -m "Post release version $VERSION"
+  $GIT_BIN push
+}
+
+##
+# List commit messages for Changelog in new version.
+#
+# Externals:
+#     GIT_BIN
+##
+prerelease_changelog() {
+  latestVersion=$($GIT_BIN tag --sort=-creatordate | head -n1)
+  read -p "Last Git Tag Version to compare: (default: $latestVersion)" lv
+  lv=${lv:-$latestVersion}
+
+  echo "Listing changes from last version $lv."
+  git_log=$($GIT_BIN log master...$lv --pretty=format:'* [%h]('"${REPO_URL}"'/commit/%H) | %s' --reverse | grep -v -E "Update to version|Post release version")
+  echo -e "\n## ${VERSION}\n### [Changes from ${lv}](${REPO_URL}/compare/${lv}...${VERSION})\n\n${git_log}" | sed -e '/# CHANGELOG/r /dev/stdin' CHANGELOG.md > CHANGELOG.release
+
+  ${EDITOR:-vim} ${PROJ_DIR}CHANGELOG.release
+  if [[ $? -ne 0 ]]
+  then
+    return $?
+  fi
+
+  mv CHANGELOG.release CHANGELOG.md
+}
+
+##
+# Perform a release for the application, coordinating relevant bits.
+#
+# Eveything release related will be done in this script so it's easier to
+# treat the actions as atomic and rollback/abort as necessary.
+#
+# Currently this script is not particularly robust. It should be strengthened as failure
+# scenarios are encountered.
+#
+# Externals:
+#    PROJ_DIR, GIT, BIN_DIR, VERSION
+##
+
+release_lock="${PROJ_DIR}.releasing"
+
+# If previous release didn't clean up, abort.
+[[ -f "$release_lock" ]] && die "${release_lock} already exists. Clean up previous release before continuing"
+
+# Check to make sure git is fully synched.
+$GIT_BIN remote update
+statuses=$($GIT_BIN status -sb | awk '/##/ {if ($2 != "master...origin/master") { print "NOT_MASTER" }; s[$3]=1}; {s[$1]=1} END {for (t in s) { print t}}')
+unsynched=0
+for s in $statuses
+do
+  case $s in
+    'NOT_MASTER')
+      test "$BRANCH_RELEASE" || die  'Release must be run from master.'
+      ;;
+    'M')
+      echo 'Modified files exist. Commit and push change.'
+      unsynched=1
+      ;;
+    '[ahead')
+      echo 'Local git is ahead of origin. Push changes.'
+      unsynched=1
+      ;;
+    '[behind')
+      echo 'Local git is behind origin. Pull changes.'
+      unsynched=1
+      ;;
+  esac
+done
+
+test -z "$BRANCH_RELEASE" && \
+  test $unsynched -ne 0 && \
+  die 'Out of sync, aborting.'
+
+touch "${release_lock}"
+
+# Cut and push released version
+update_version "Version to release" "${VERSION%%-*}"
+prerelease_changelog || die "Changelog not accepted, aborting."
+$GIT_BIN add "CHANGELOG.md"
+$GIT_BIN add "$PROP_FILE"
+$GIT_BIN commit -m "Update to version $VERSION"
+$GIT_BIN tag -a $VERSION -m "Release [$VERSION]"
+$GIT_BIN push origin $VERSION
+
+[[ -z "${BRANCH_RELEASE}" ]] && postrelease_version
+
+rm "${release_lock}"
