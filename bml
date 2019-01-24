@@ -1,0 +1,82 @@
+# Copyright 2019 Brightcove
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+##
+# @file bml
+# The buildsrc Make library.
+#
+# A collection of reusable Make functionality to include across projects.
+# This will include some functions and some conventional rules.
+#
+# @author Brightcove
+# @copyright Apache License, Version 2.0
+# @version 0.1.0
+# source_repository https://github.com/brightcove/buildsrc
+#
+# @par Usage
+#
+# To use this library, download the file and include it into the main
+# Make file such as:
+# @code
+#
+# include buildsrc/bml
+#
+# @endcode
+##
+
+##
+# The path to a required command; abort with an error if not found.
+#
+# The requested command must be on the PATH/located by `which`.
+#
+# @par Example
+# @code
+#
+# DOCKER ?= $(call required-command,docker)
+# ...
+# ${DOCKER} run ...
+#
+# @endcode
+#
+# @param $1[in] The basename of the command to seek.
+# @return The path to the command, make will abort if not found.
+##
+required-command = $(or ${_$1_which},                             \
+                   $(eval _$1_which=$(shell which $1)),           \
+                   ${_$1_which},                                  \
+                   $(error '$1' is missing, please install $1))
+
+# Variables to help work with logically insignificant punctuation in input.
+__bml_comma := ,
+__bml_empty :=
+__bml_space := ${__bml_empty} ${__bml_empty}
+
+##
+# Format the list of provided variables to be passed to envsust.
+#
+# To make it through to envsubst, the variables will be a comma separated list
+# with each value matching the pattern `$${VAR_NAME}`.
+#
+# @par Example
+# @code
+#
+# envsubst $(call < ${INPUT_FILE} envsubst-join,${VARS_TO_EXPAND}) > ${OUTPUT_FILE}
+#
+# @endcode
+#
+# @param $1[in] The list of variables names to join.
+# @return The merged string, ready to be passed to envsubst.
+##
+envsubst-join = '$(subst ${__bml_space},${__bml_comma},$(foreach var,$1,$$$${${var}}))'
+
