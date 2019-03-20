@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
+set -e
 
-#-------------------------------------------------------------------------------
-# Version 1.0.0
-#-------------------------------------------------------------------------------
+##
+# @file release
+# Perform a release for the current project.
+#
+# A release primarily consists creating a git tag for the released version
+# and tracking the resulting versions in a build properties file (PROP_FILE).
+#
+# @author Brightcove
+# @copyright Apache License, Version 2.0
+# @version 1.0.1
+# source_repository https://github.com/brightcove/buildsrc
+##
 
 #-------------------------------------------------------------------------------
 # Copyright 2018 Brightcove
@@ -20,76 +30,130 @@
 # limitations under the License.
 #-------------------------------------------------------------------------------
 
-#-------------------------------------------------------------------------------
-# This script depends on git being installed and a properties files
-# with some environment vars.
+##
+# This script depends on several environment variables being provided.
+# Each of these is declared and documented between this comment
+# block and the first function declaration.
+##
+
+##
+# The directory for the project that is being released.
 #
-# Define a properties file like so:
-# export PROP_FILE  := build.properties
+# If unset this will be blank...which will work for the current directory.
+##
+declare -r PROJ_DIR
+
+##
+# The properties file which contains the version to release.
 #
-# build.properties needs the following variables defined in them:
-#
+# This file should contain a line similar to:
 # VERSION=1.0.0-SNAPSHOT
-# REPO_URL=https://github.com/brightcove/buildsrc
-#-------------------------------------------------------------------------------
+##
+declare -r PROP_FILE
+
+##
+# The current version according to PROP_FILE.
+#
+# This will normally be provided by sourcing/including PROP_FILE.
+##
+declare VERSION
+
+##
+# The git executable to call. If not already set will look on the path.
+##
+declare GIT
+
+##
+# (Optional) Whether this is a release from a branch.
+#
+# Branch releases may be less restrictive but also mark themselves more loudly.
+##
+declare -r BRANCH_RELEASE
+
+##
+# Utility function to echo to stderr.
+#
+# @param $@[in] The arguments to pass through to echo.
+##
+release::error() {
+  echo "$@" >&2  
+}
 
 ##
 # Utility function to exit with a failure message.
 #
-# Params:
-#   $1 - Message to output before exiting
+# @param $1[in] - Message to output before exiting.
 ##
-die() {
-  echo "$1"
+release::die() {
+  release::error "$1"
   exit 1
+}
+
+##
+# Locate and set dependencies or die trying.
+##
+release::find_deps() {
+  if [[ -n "${GIT:=$(which git)}" ]]; then
+    readonly GIT
+  else
+    die "git is required but was not found!"
+  fi
 }
 
 ##
 # Prompt the user for a new version which is then used.
 #
-# The new version is updated in $PROP_FILE and that file is then
+# The new version is updated in PROP_FILE and that file is then
 # re-sourced to update the running environment.
 #
-# Params:
-#   $1 - The text prompt to display to the user.
-#   $2 - The default version to display and use if nothing is entered.
+# Globals:
+#   PROP_FILE[in]
+#   VERSION[out]
 #
-# Externals:
-#   PROP_FILE, VERSION
-# Outputs:
-#   VERSION will be updated to reflect new value.
+# @param $1[in] The text prompt to display to the user.
+# @param $2[in] The default version to display and use if nothing is entered.
 ##
-update_version() {
-  prompt=$1
-  v=$2
+release::update_version() {
+  local prompt=$1
+  local default_version=$2
+  local temp_file
+  local version_provided
+  local new_version
 
+  temp_file="${PROP_FILE}.release"
+  [[ -f "${temp_file}" ]] && release::die "${temp_file} file already exists. Remove if stale"
+
+  # Determine new version.
   [[ "${BRANCH_RELEASE}" ]] && prompt="(BRANCH) $prompt"
+  read -p "${prompt} [${default_version}]:" version_provided
+  new_version=${version_provided:-$default_vesion}
+  [[ "${BRANCH_RELEASE}" ]] && new_version="${new_version}-BRANCH"
 
-  temp="${PROP_FILE}.release"
-  [[ -f "${temp}" ]] && die "$temp file already exists. Remove if stale"
-
-  read -p "$prompt [$v]:" update_version_in
-  NEW_VERSION=${update_version_in:-$v}
-  [[ "${BRANCH_RELEASE}" ]] && NEW_VERSION="${NEW_VERSION}-BRANCH"
-
-  sed "s/^VERSION=.*$/VERSION=${NEW_VERSION}/" "$PROP_FILE" > "$temp"
-  mv "$temp" "$PROP_FILE"
-  source "$PROP_FILE"
+  # Update and source PROP_FILE.
+  sed "s/^VERSION=.*$/VERSION=${new_version}/" "${PROP_FILE}" > "${temp_file}"
+  mv "${temp_file}" "${PROP_FILE}"
+  source "${PROP_FILE}"
 }
 
 ##
-# Cut and push post-release version
+# Cut and push post-release version.
 #
-# Externals:
-#     VERSION, PROP_FILE
+# The released version should only be associated with code at the 
+# time of the release to avoid ambiguity,
+# so this updates the version immediately after the release.
+#
+# Globals:
+#   VERSION[in]
+#   PROP_FILE[in]
+#   GIT[in]
 ##
-postrelease_version() {
-  (( new_micro="${VERSION##*.}" + 1 ))
-  update_version "Post-release version" \
-    "${VERSION%.*}.${new_micro}-SNAPSHOT"
-  $GIT_BIN add "$PROP_FILE"
-  $GIT_BIN commit -m "Post release version $VERSION"
-  $GIT_BIN push
+release::postrelease_version() {
+  local -i new_micro
+  let new_micro="${VERSION##*.}"+1
+  release::update_version "Post-release version" "${VERSION%.*}.${new_micro}-SNAPSHOT"
+  ${GIT} add "${PROP_FILE}"
+  ${GIT} commit -m "Post release version ${VERSION}"
+  ${GIT} push
 }
 
 ##
@@ -98,13 +162,14 @@ postrelease_version() {
 # Externals:
 #     GIT_BIN
 ##
+# TODO: Extract Me
 prerelease_changelog() {
-  latestVersion=$($GIT_BIN tag --sort=-creatordate | head -n1)
+  latestVersion=$($GIT tag --sort=-creatordate | head -n1)
   read -p "Last Git Tag Version to compare: (default: $latestVersion)" lv
   lv=${lv:-$latestVersion}
 
   echo "Listing changes from last version $lv."
-  git_log=$($GIT_BIN log master...$lv --pretty=format:'* [%h]('"${REPO_URL}"'/commit/%H) | %s' --reverse | grep -v -E "Update to version|Post release version")
+  git_log=$($GIT log master...$lv --pretty=format:'* [%h]('"${REPO_URL}"'/commit/%H) | %s' --reverse | grep -v -E "Update to version|Post release version")
   echo -e "\n## ${VERSION}\n### [Changes from ${lv}](${REPO_URL}/compare/${lv}...${VERSION})\n\n${git_log}" | sed -e '/# CHANGELOG/r /dev/stdin' CHANGELOG.md > CHANGELOG.release
 
   ${EDITOR:-vim} ${PROJ_DIR}CHANGELOG.release
@@ -117,6 +182,50 @@ prerelease_changelog() {
 }
 
 ##
+# Check whether the current git branch seems to be in-synch with its origin.
+#
+# This includes verifying that the current branch is master and the revisions
+# match between the peers.
+#
+# Globals:
+#   GIT
+#
+# @return 0 (success) if everything appears to be in sync,
+#         1 (failure) if there is a mismatch.
+##
+release::git_is_synched() {
+  local status
+  local statuses
+  local unsynched
+
+  statuses=$(${GIT} status -sb | awk '/##/ {if ($2 != "master...origin/master") { print "NOT_MASTER" }; s[$3]=1}; {s[$1]=1} END {for (t in s) { print t}}')
+  synched=0
+
+  for status in $statuses; do
+    case $status in
+      'NOT_MASTER')
+        release::error 'Not on master!.'
+        synched=1
+        ;;
+      'M')
+        release::error 'Modified files exist. Commit and push change.'
+        synched=1
+        ;;
+      '[ahead')
+        release::error 'Local git is ahead of origin. Push changes.'
+        synched=1
+        ;;
+      '[behind')
+        release::error 'Local git is behind origin. Pull changes.'
+        synched=1
+        ;;
+    esac
+  done
+
+  synched
+}
+
+##
 # Perform a release for the application, coordinating relevant bits.
 #
 # Eveything release related will be done in this script so it's easier to
@@ -125,55 +234,44 @@ prerelease_changelog() {
 # Currently this script is not particularly robust. It should be strengthened as failure
 # scenarios are encountered.
 #
-# Externals:
-#    PROJ_DIR, GIT, BIN_DIR, VERSION
+# Globals:
+#    PROJ_DIR[in]
+#    GIT[in]
+#    BIN_DIR[in]
+#    VERSION[in,out]
 ##
+release::main() {
+  local release_lock
 
-release_lock="${PROJ_DIR}.releasing"
+  [[ -f "${PROP_FILE}" ]] || release::die "Build property file ${PROP_FILE} not present".
 
-# If previous release didn't clean up, abort.
-[[ -f "$release_lock" ]] && die "${release_lock} already exists. Clean up previous release before continuing"
+  release_lock="${PROJ_DIR}.releasing"
+  [[ -f "${release_lock}" ]] && release::die "${release_lock} already exists. Clean up previous release before continuing"
 
-# Check to make sure git is fully synched.
-$GIT_BIN remote update
-statuses=$($GIT_BIN status -sb | awk '/##/ {if ($2 != "master...origin/master") { print "NOT_MASTER" }; s[$3]=1}; {s[$1]=1} END {for (t in s) { print t}}')
-unsynched=0
-for s in $statuses
-do
-  case $s in
-    'NOT_MASTER')
-      test "$BRANCH_RELEASE" || die  'Release must be run from master.'
-      ;;
-    'M')
-      echo 'Modified files exist. Commit and push change.'
-      unsynched=1
-      ;;
-    '[ahead')
-      echo 'Local git is ahead of origin. Push changes.'
-      unsynched=1
-      ;;
-    '[behind')
-      echo 'Local git is behind origin. Pull changes.'
-      unsynched=1
-      ;;
-  esac
-done
+  # Check to make sure git is fully synched.
+  ${GIT} remote update
 
-test -z "$BRANCH_RELEASE" && \
-  test $unsynched -ne 0 && \
-  die 'Out of sync, aborting.'
+  [[ -n "${BRANCH_RELEASE}" ]] \
+    || [[ release::git_is_synched ]] \
+    || release::die 'Out of sync, aborting.'
 
-touch "${release_lock}"
+  touch "${release_lock}"
 
-# Cut and push released version
-update_version "Version to release" "${VERSION%%-*}"
-prerelease_changelog || die "Changelog not accepted, aborting."
-$GIT_BIN add "CHANGELOG.md"
-$GIT_BIN add "$PROP_FILE"
-$GIT_BIN commit -m "Update to version $VERSION"
-$GIT_BIN tag -a $VERSION -m "Release [$VERSION]"
-$GIT_BIN push origin $VERSION
+  # Cut and push released version
+  release::update_version "Version to release" "${VERSION%%-*}"
 
-[[ -z "${BRANCH_RELEASE}" ]] && postrelease_version
+  #prerelease_changelog || die "Changelog not accepted, aborting."
+  #${GIT} add "CHANGELOG.md"
 
-rm "${release_lock}"
+  ${GIT} add "$PROP_FILE"
+  ${GIT} commit -m "Update to version ${VERSION}"
+  ${GIT} tag -a "${VERSION}" -m "Release [${VERSION}]"
+  ${GIT} push origin ${VERSION}
+
+  [[ -n "${BRANCH_RELEASE}" ]] || release::postrelease_version
+
+  rm "${release_lock}"
+}
+
+release::find_deps
+release::main
