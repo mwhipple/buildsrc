@@ -6,12 +6,14 @@ set -e
 # Perform a release for the current project.
 #
 # A release primarily consists creating a git tag for the released version
-# and tracking the resulting versions in a build properties file (PROP_FILE).
+# and tracking the resulting versions in a build properties file passed as an argument.
 #
 # @author Brightcove
 # @copyright Apache License, Version 2.0
-# @version 1.0.1
+# @version 1.1.0
 # source_repository https://github.com/brightcove/buildsrc
+#
+# @param $1 The path to the properties file where the version is stored. .
 ##
 
 #-------------------------------------------------------------------------------
@@ -37,22 +39,15 @@ set -e
 ##
 
 ##
-# The directory for the project that is being released.
-#
-# If unset this will be blank...which will work for the current directory.
-##
-declare -r PROJ_DIR
-
-##
 # The properties file which contains the version to release.
 #
 # This file should contain a line similar to:
 # VERSION=1.0.0-SNAPSHOT
 ##
-declare -r PROP_FILE
+declare -r prop_file=$1
 
 ##
-# The current version according to PROP_FILE.
+# The current version according to prop_file.
 #
 # This will normally be provided by sourcing/including PROP_FILE.
 ##
@@ -62,6 +57,15 @@ declare VERSION
 # The git executable to call. If not already set will look on the path.
 ##
 declare GIT
+
+##
+# (Optional) Where hook scripts are located. Defaults to directory of release script.
+#
+# Hook scripts allow for plugging in additional functionality to the release flow.
+# Currently supported hook is:
+#   - release::pre_release_hook
+##
+declare RELEASE_HOOK_DIR
 
 ##
 # (Optional) Whether this is a release from a branch.
@@ -76,7 +80,7 @@ declare -r BRANCH_RELEASE
 # @param $@[in] The arguments to pass through to echo.
 ##
 release::error() {
-  echo "$@" >&2  
+  echo "$@" >&2
 }
 
 ##
@@ -98,16 +102,21 @@ release::find_deps() {
   else
     die "git is required but was not found!"
   fi
+
+  if [[ -z "${RELEASE_HOOK_DIR}" ]]; then
+    RELEASE_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+    readonly RELEASE_HOOK_DIR
+  fi
 }
 
 ##
 # Prompt the user for a new version which is then used.
 #
-# The new version is updated in PROP_FILE and that file is then
+# The new version is updated in prop_file and that file is then
 # re-sourced to update the running environment.
 #
 # Globals:
-#   PROP_FILE[in]
+#   prop_file[in]
 #   VERSION[out]
 #
 # @param $1[in] The text prompt to display to the user.
@@ -120,65 +129,40 @@ release::update_version() {
   local version_provided
   local new_version
 
-  temp_file="${PROP_FILE}.release"
+  temp_file="${prop_file}.release"
   [[ -f "${temp_file}" ]] && release::die "${temp_file} file already exists. Remove if stale"
 
   # Determine new version.
   [[ "${BRANCH_RELEASE}" ]] && prompt="(BRANCH) $prompt"
   read -p "${prompt} [${default_version}]:" version_provided
-  new_version=${version_provided:-$default_vesion}
+  new_version=${version_provided:-$default_version}
   [[ "${BRANCH_RELEASE}" ]] && new_version="${new_version}-BRANCH"
 
-  # Update and source PROP_FILE.
-  sed "s/^VERSION=.*$/VERSION=${new_version}/" "${PROP_FILE}" > "${temp_file}"
-  mv "${temp_file}" "${PROP_FILE}"
-  source "${PROP_FILE}"
+  # Update and source prop_file.
+  sed "s/^VERSION=.*$/VERSION=${new_version}/" "${prop_file}" > "${temp_file}"
+  mv "${temp_file}" "${prop_file}"
+  source "${prop_file}"
 }
 
 ##
 # Cut and push post-release version.
 #
-# The released version should only be associated with code at the 
+# The released version should only be associated with code at the
 # time of the release to avoid ambiguity,
 # so this updates the version immediately after the release.
 #
 # Globals:
 #   VERSION[in]
-#   PROP_FILE[in]
+#   prop_file[in]
 #   GIT[in]
 ##
 release::postrelease_version() {
   local -i new_micro
   let new_micro="${VERSION##*.}"+1
   release::update_version "Post-release version" "${VERSION%.*}.${new_micro}-SNAPSHOT"
-  ${GIT} add "${PROP_FILE}"
+  ${GIT} add "${prop_file}"
   ${GIT} commit -m "Post release version ${VERSION}"
   ${GIT} push
-}
-
-##
-# List commit messages for Changelog in new version.
-#
-# Externals:
-#     GIT_BIN
-##
-# TODO: Extract Me
-prerelease_changelog() {
-  latestVersion=$($GIT tag --sort=-creatordate | head -n1)
-  read -p "Last Git Tag Version to compare: (default: $latestVersion)" lv
-  lv=${lv:-$latestVersion}
-
-  echo "Listing changes from last version $lv."
-  git_log=$($GIT log master...$lv --pretty=format:'* [%h]('"${REPO_URL}"'/commit/%H) | %s' --reverse | grep -v -E "Update to version|Post release version")
-  echo -e "\n## ${VERSION}\n### [Changes from ${lv}](${REPO_URL}/compare/${lv}...${VERSION})\n\n${git_log}" | sed -e '/# CHANGELOG/r /dev/stdin' CHANGELOG.md > CHANGELOG.release
-
-  ${EDITOR:-vim} ${PROJ_DIR}CHANGELOG.release
-  if [[ $? -ne 0 ]]
-  then
-    return $?
-  fi
-
-  mv CHANGELOG.release CHANGELOG.md
 }
 
 ##
@@ -196,33 +180,53 @@ prerelease_changelog() {
 release::git_is_synched() {
   local status
   local statuses
-  local unsynched
+  local -i synched
 
   statuses=$(${GIT} status -sb | awk '/##/ {if ($2 != "master...origin/master") { print "NOT_MASTER" }; s[$3]=1}; {s[$1]=1} END {for (t in s) { print t}}')
-  synched=0
+  let synched=0
 
   for status in $statuses; do
     case $status in
       'NOT_MASTER')
         release::error 'Not on master!.'
-        synched=1
+        let synched=1
         ;;
       'M')
         release::error 'Modified files exist. Commit and push change.'
-        synched=1
+        let synched=1
         ;;
       '[ahead')
         release::error 'Local git is ahead of origin. Push changes.'
-        synched=1
+        let synched=1
         ;;
       '[behind')
         release::error 'Local git is behind origin. Pull changes.'
-        synched=1
+        let synched=1
         ;;
     esac
   done
 
-  synched
+  return $synched
+}
+
+##
+# Call all pre_release_hook scripts.
+#
+# Any script present in the HOOK_DIR matching the pattern
+# 'pre_release_' will be executed as:
+#    $script "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
+##
+release::pre_release_hook() {
+  local script;
+  shopt -s nullglob;
+  for script in ${RELEASE_HOOK_DIR}/pre_release_*; do
+    if [[ -x "$script" ]]; then
+      "$script" "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}" || exit $?
+    else
+      release::error "$script is not executable, skipping."
+    fi
+  done
+  shopt -u nullglob;
 }
 
 ##
@@ -235,7 +239,7 @@ release::git_is_synched() {
 # scenarios are encountered.
 #
 # Globals:
-#    PROJ_DIR[in]
+#    prop_file[in]
 #    GIT[in]
 #    BIN_DIR[in]
 #    VERSION[in,out]
@@ -243,16 +247,16 @@ release::git_is_synched() {
 release::main() {
   local release_lock
 
-  [[ -f "${PROP_FILE}" ]] || release::die "Build property file ${PROP_FILE} not present".
+  [[ -f "${prop_file}" ]] || release::die "Build property file ${prop_file} not present".
 
-  release_lock="${PROJ_DIR}.releasing"
+  release_lock="${prop_file}.releasing"
   [[ -f "${release_lock}" ]] && release::die "${release_lock} already exists. Clean up previous release before continuing"
 
   # Check to make sure git is fully synched.
   ${GIT} remote update
 
   [[ -n "${BRANCH_RELEASE}" ]] \
-    || [[ release::git_is_synched ]] \
+    || release::git_is_synched \
     || release::die 'Out of sync, aborting.'
 
   touch "${release_lock}"
@@ -260,10 +264,10 @@ release::main() {
   # Cut and push released version
   release::update_version "Version to release" "${VERSION%%-*}"
 
-  #prerelease_changelog || die "Changelog not accepted, aborting."
+  release::pre_release_hook
   #${GIT} add "CHANGELOG.md"
 
-  ${GIT} add "$PROP_FILE"
+  ${GIT} add "${prop_file}"
   ${GIT} commit -m "Update to version ${VERSION}"
   ${GIT} tag -a "${VERSION}" -m "Release [${VERSION}]"
   ${GIT} push origin ${VERSION}
@@ -274,4 +278,21 @@ release::main() {
 }
 
 release::find_deps
+source ${prop_file}
 release::main
+
+exit 0
+
+##
+# CHANGELOG
+#
+# 1.1.0
+# ------
+# - Take prop file as argument, drop proj dir
+# - Lint script, update conventions
+# - Split out changelog into release
+#
+# 1.0.0
+# -----
+# - Initial Release
+##

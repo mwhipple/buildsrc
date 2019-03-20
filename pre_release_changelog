@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -e
+
+##
+# @file pre_release_changelog
+# Generate a changelog from the git log.
+#
+# This script will update a CHANGELOG.md file which is in the
+# same directory as the build properties file passed as the
+# first argument. The latest changes will be inserted into
+# the CHANGELOG.md file starting on line 3.
+#
+# A changelog will be generated based on the git log between HEAD
+# and another ref entered a prompt (by default the most recent tag)
+# and the resulting file will be opened using EDITOR so that it
+# can be adjusted as needed before being included in the release.
+#
+# To use this script, copy this file into a directory which is
+# specified as the HOOK_DIR and make sure the file is executable.
+##
+
+# @author Brightcove
+# @copyright Apache License, Version 2.0
+# @version 1.0.0
+# source_repository https://github.com/brightcove/buildsrc
+#
+# The params will be provided by release as part of the pre_release hook.
+#
+# @param $1 The path to the properties file where the version is stored.
+# @param $2 The version in the process of being released.
+# @param $3 Whether the release in progress is a branch release.
+##
+
+#-------------------------------------------------------------------------------
+# Copyright 2018 Brightcove
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#-------------------------------------------------------------------------------
+
+readonly GIT
+readonly REPO_URL
+
+readonly prop_file=$1
+readonly version=$2
+readonly branch_release=$3
+readonly proj_dir=$(dirname prop_file)
+
+declare latest_version
+declare previous_version
+declare git_log
+
+readonly changelog="${proj_dir}/CHANGELOG.md"
+
+[[ -n ${branch_release} ]] && exit 0
+
+if [[ ! -w ${changelog} ]]; then
+  echo "${changelog} is not writeable, aborting!" >&2
+  exit 1
+fi
+
+latest_version=$($GIT tag --sort=-creatordate | head -n1)
+read -p "Last Git Tag Version to compare: (default: ${latest_version})" previous_version
+previous_version=${previous_vesion:-${latest_version}}
+
+echo "Listing changes from last version ${previous_version}."
+git_log=$($GIT log ...${previous_version} --pretty=format:'* [%h]('"${REPO_URL}"'/commit/%H) | %s' --reverse \
+          | grep -v -E 'Update to version|Post release version')
+
+cat <<CHANGES |
+## ${version}
+### [Changes from ${previous_version}](${REPO_URL}/compare/${previous_version}...${version})
+
+${git_log}
+
+CHANGES
+sed -e '2r /dev/stdin' ${changelog} > ${changelog}.release
+
+${EDITOR:-vim} ${changelog}.release
+if [[ ! $? ]]; then
+  echo 'Changelog not accepted, aborting!' >&2
+  exit 1
+fi
+
+mv "${changelog}.release" "${changelog}"
+git add "${changelog}"
