@@ -4,10 +4,10 @@ A collection of build related shell scripts and recipes.
 
 ## Metadata
 
-- Status: Under Development
+- Status: Active
 - Type: Library
 - Versioning: Semantic Versioning
-- Documentation: This file, the source files, and the [wiki](https://www.github.com/brightcove/buildsrc)
+- Documentation: This file, the source files, and the [wiki](https://github.com/brightcove/buildsrc/wiki)
 - Maintainers: [CODEOWNERS](CODEOWNERS)
 - Contact/Questions/Issues: [GitHub Issues](https://www.github.com/brightcove/buildsrc/issues)
 - Contributions: Contributions are welcome.
@@ -25,4 +25,4 @@ include all their relevant documentation.
 
 ## Installation
 
-Copypasta
+Installation methods are documented on the [wiki](https://github.com/brightcove/buildsrc/wiki/Installation)
