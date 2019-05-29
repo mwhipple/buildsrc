@@ -265,7 +265,6 @@ release::main() {
   release::update_version "Version to release" "${VERSION%%-*}"
 
   release::pre_release_hook
-  #${GIT} add "CHANGELOG.md"
 
   ${GIT} add "${prop_file}"
   ${GIT} commit -m "Update to version ${VERSION}"
