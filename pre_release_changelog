@@ -9,6 +9,8 @@ set -e
 # same directory as the build properties file passed as the
 # first argument. The latest changes will be inserted into
 # the CHANGELOG.md file starting on line 3.
+# If a CHANGLOG file does not exist or does not have enough lines,
+# guidance to populate the CHANGELOG will be provided.
 #
 # A changelog will be generated based on the git log between HEAD
 # and another ref entered a prompt (by default the most recent tag)
@@ -17,11 +19,10 @@ set -e
 #
 # To use this script, copy this file into a directory which is
 # specified as the HOOK_DIR and make sure the file is executable.
-##
-
+#
 # @author Brightcove
 # @copyright Apache License, Version 2.0
-# @version 1.0.0
+# @version 1.0.1
 # source_repository https://github.com/brightcove/buildsrc
 #
 # The params will be provided by release as part of the pre_release hook.
@@ -29,10 +30,12 @@ set -e
 # @param $1 The path to the properties file where the version is stored.
 # @param $2 The version in the process of being released.
 # @param $3 Whether the release in progress is a branch release.
+#
+# If running directly, also look at the Environment Variables group below.
 ##
 
 #-------------------------------------------------------------------------------
-# Copyright 2018 Brightcove
+# Copyright 2019 Brightcove
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,8 +50,22 @@ set -e
 # limitations under the License.
 #-------------------------------------------------------------------------------
 
-readonly GIT
+##
+# @defgroup Environment Variables {
+##
+
+##
+# The location to the git binary, will search the path if not provided.
+##
+readonly GIT="${GIT:-$(which git)}"
+
+##
+# The URL for the root of the GitHub repository.
+# This will be used to generate links to GitHub in the CHANGELOG.
+##
 readonly REPO_URL
+
+## } ##
 
 readonly prop_file=$1
 readonly version=$2
@@ -62,6 +79,15 @@ declare git_log
 readonly changelog="${proj_dir}/CHANGELOG.md"
 
 [[ -n ${branch_release} ]] && exit 0
+
+if [[ ! -f ${changelog} ]] ||  (($(cat ${changelog} | wc -l) < 2)); then
+  {
+    echo "${changelog} does not exist or is invalid."
+    echo "An initial file can be created with the command:"
+    echo "echo -e \"# CHANGELOG\n\n\" > ${changelog}"
+  } >&2
+  exit 1
+fi
 
 if [[ ! -w ${changelog} ]]; then
   echo "${changelog} is not writeable, aborting!" >&2
