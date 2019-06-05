@@ -212,7 +212,7 @@ release::git_is_synched() {
 ##
 # Call all pre_release_hook scripts.
 #
-# Any script present in the HOOK_DIR matching the pattern
+# Any script present in the RELEASE_HOOK_DIR matching the pattern
 # 'pre_release_' will be executed as:
 #    $script "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
 ##
