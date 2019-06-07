@@ -96,7 +96,7 @@ fi
 
 latest_version=$($GIT tag --sort=-creatordate | head -n1)
 read -p "Last Git Tag Version to compare: (default: ${latest_version})" previous_version
-previous_version=${previous_vesion:-${latest_version}}
+previous_version=${previous_version:-${latest_version}}
 
 echo "Listing changes from last version ${previous_version}."
 git_log=$($GIT log ...${previous_version} --pretty=format:'* [%h]('"${REPO_URL}"'/commit/%H) | %s' --reverse \
