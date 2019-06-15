@@ -5,32 +5,32 @@ set -e
 # @file release
 # Perform a release for the current project.
 #
-# A release primarily consists creating a git tag for the released version
-# and tracking the resulting versions in a build properties file passed as an argument.
+# A release primarily consists of creating a git tag for the version
+# and recording the version in a properties file passed as an argument.
 #
 # @author Brightcove
 # @copyright Apache License, Version 2.0
 # @version 1.1.0
 # source_repository https://github.com/brightcove/buildsrc
 #
-# @param $1 The path to the properties file where the version is stored. .
+# @param $1 The path to the properties file where the version is stored.
 ##
 
-#-------------------------------------------------------------------------------
-# Copyright 2018 Brightcove
+#-------------------------------------------------------------------------
+# Copyright 2019 Brightcove
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------
 
 ##
 # This script depends on several environment variables being provided.
@@ -39,10 +39,22 @@ set -e
 ##
 
 ##
+# Alias for the name used to invoke this script.
+##
+declare -r me=$0
+
+##
 # The properties file which contains the version to release.
 #
 # This file should contain a line similar to:
 # VERSION=1.0.0-SNAPSHOT
+#
+# This script is designed to work with multi-part version
+# numbers such as the triplets used in semantic versioning.
+# Behavior with other styles of version numbers is currently
+# unspecified and not likely to be desirable.
+# There is upcoming work to allow customization of version
+# number management.
 ##
 declare -r prop_file=$1
 
@@ -54,58 +66,211 @@ declare -r prop_file=$1
 declare VERSION
 
 ##
+# If true then the default versions will be used without prompting.
+##
+declare -r AUTO_VERSION
+
+##
+# If specified then use this as the version to release.
+#
+# This will ignore the value currently in build.properties.
+##
+declare -r RELEASE_VERSION
+
+##
 # The git executable to call. If not already set will look on the path.
 ##
 declare GIT
 
 ##
-# (Optional) Where hook scripts are located. Defaults to directory of release script.
+# (Optional) Where hook scripts are located.
 #
-# Hook scripts allow for plugging in additional functionality to the release flow.
+# Defaults to directory of release script.
+#
+# Hook scripts allow for plugging in functionality to the release flow.
 # Currently supported hook is:
 #   - release::pre_release_hook
 ##
 declare RELEASE_HOOK_DIR
 
 ##
+# (Optional) Whether to output additional information.
+#
+# If passed, then this script will be chatty,
+# otherwise silence implies success.
+##
+declare -r RELEASE_VERBOSE
+
+##
 # (Optional) Whether this is a release from a branch.
 #
-# Branch releases may be less restrictive but also mark themselves more loudly.
+# Branch releases may be less restrictive
+# but also mark themselves more loudly.
 ##
 declare -r BRANCH_RELEASE
 
 ##
-# Utility function to echo to stderr.
+# Perform a release for the application, coordinating relevant bits.
 #
-# @param $@[in] The arguments to pass through to echo.
+# Release related actions will be performed by this script
+# so that it can manage some level of transactionaltiy and
+# rollback/abort as necessary.
+#
+# Currently this script is not particularly robust.
+# It should be strengthened as failure scenarios are encountered.
+#
+# Globals:
+#   prop_file[in]
+#   GIT[in]
+#   BIN_DIR[in]
+#   VERSION[in,out]
 ##
-release::error() {
-  echo "$@" >&2
-}
+release::main() {
+  release::find_deps
 
-##
-# Utility function to exit with a failure message.
-#
-# @param $1[in] - Message to output before exiting.
-##
-release::die() {
-  release::error "$1"
-  exit 1
+  local release_lock="${prop_file}.releasing"
+  release::validate_config "${release_lock}"
+  source ${prop_file}
+
+  [[ -n "${BRANCH_RELEASE}" ]] \
+    || release::git_is_synched \
+    || release::die 'Out of sync, aborting.'
+
+  touch "${release_lock}"
+
+  # Cut and push released version
+  release::update_version "Version to release" "$(release::determine_version)"
+
+  release::pre_release_hook || release::info 'No pre_release hooks'
+
+  ${GIT} add "${prop_file}"
+  ${GIT} commit -m "Update to version ${VERSION}"
+  ${GIT} tag -a "${VERSION}" -m "Release [${VERSION}]"
+  ${GIT} push origin ${VERSION}
+
+  [[ -n "${BRANCH_RELEASE}" ]] || release::postrelease_version
+
+  rm "${release_lock}"
 }
 
 ##
 # Locate and set dependencies or die trying.
 ##
 release::find_deps() {
-  if [[ -n "${GIT:=$(which git)}" ]]; then
+  if [[ -x "${GIT:=$(which git)}" ]]; then
     readonly GIT
   else
-    die "git is required but was not found!"
+    release::die "git is required but cannot be found or executed!"
   fi
-
   if [[ -z "${RELEASE_HOOK_DIR}" ]]; then
-    RELEASE_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+    RELEASE_HOOK_DIR="$( \
+      cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
     readonly RELEASE_HOOK_DIR
+  fi
+}
+
+##
+# Assert that the configuration and invocation are valid.
+#
+# If validation fails then the script will output an error
+# and exit with a failure status of 1.
+#
+# Globals:
+#   prop_file[in]
+#
+# @param $1 The file name of the an in-flight release lock.
+##
+release::validate_config() {
+  local release_lock=$1
+
+  [[ "${prop_file}" ]] || release::die \
+    'Missing Argument' "$(release::usage)"
+
+  [[ -f "${prop_file}" ]] || release::die \
+    "Build property file ${prop_file} not present or not a file."
+
+  [[ -w "${prop_file}" ]] || release::die \
+    "Build property file ${prop_file} is not writable."
+
+  # The test is flipped so the expression/return is successful.
+  [[ ! -f "${release_lock}" ]] || release::die \
+    "${release_lock} already exists." \
+    " Clean up previous release before continuing."
+}
+
+##
+# Check whether the current git branch is in-synch with its origin.
+#
+# This includes verifying that the current branch is master
+# and the revisions match between the peers.
+#
+# Globals:
+#   GIT
+#
+# @return 0 (success) if everything appears to be in sync,
+#         1 (failure) if there is a mismatch.
+##
+release::git_is_synched() {
+  local status
+  local statuses
+  local -i synched
+
+  # Make sure to have an up-to-date view of origin.
+  ${GIT} remote update
+
+  statuses=$(${GIT} status -sb | awk \
+    '/##/ { \
+      if ($2 != "master...origin/master") { print "NOT_MASTER" }; \
+      s[$3]=1 \
+    }; \
+    {s[$1]=1} \
+    END {for (t in s) { print t}}')
+  (( synched=0 ))
+
+  for status in $statuses; do
+    case $status in
+      'NOT_MASTER')
+        release::error 'Not on master!.'
+        (( synched=1 ))
+        ;;
+      'M')
+        release::error 'Modified files exist. Commit and push change.'
+        (( synched=1 ))
+        ;;
+      '[ahead')
+        release::error 'Local git is ahead of origin. Push changes.'
+        (( synched=1 ))
+        ;;
+      '[behind')
+        release::error 'Local git is behind origin. Pull changes.'
+        (( synched=1 ))
+        ;;
+    esac
+  done
+
+  return $synched
+}
+
+##
+# Output the version to release (to be captured).
+#
+# If RELEASE_VERSION is specified, echoes that value.
+#
+# Will use the release_version handler if registered,
+# otherwise will return VERSION without a '-QUALIFIER`.
+#
+# If such a handler is installed it will be passed
+# VERSION as an argument and should write the version
+# to release to stdout (and that should be the only output
+# of the handler).
+##
+release::determine_version() {
+#  release::handler_fn 'release_version' "${VERSION}" \
+#    || release::handler_scripts 'release_version' "${VERSION}" \
+  if [[ "${RELEASE_VERSION}" ]]; then
+    echo "${RELEASE_VERSION}"
+  else
+    echo "${VERSION%%-*}"
   fi
 }
 
@@ -118,9 +283,10 @@ release::find_deps() {
 # Globals:
 #   prop_file[in]
 #   VERSION[out]
+#   AUTO_VERSION[in]
 #
-# @param $1[in] The text prompt to display to the user.
-# @param $2[in] The default version to display and use if nothing is entered.
+# @param $1 The text prompt to display to the user.
+# @param $2 The default version to display and use if nothing is entered.
 ##
 release::update_version() {
   local prompt=$1
@@ -132,9 +298,15 @@ release::update_version() {
   temp_file="${prop_file}.release"
   [[ -f "${temp_file}" ]] && release::die "${temp_file} file already exists. Remove if stale"
 
+
   # Determine new version.
   [[ "${BRANCH_RELEASE}" ]] && prompt="(BRANCH) $prompt"
-  read -p "${prompt} [${default_version}]:" version_provided
+  if [[ "${AUTO_VERSION}" ]]; then
+    release::info "Releasing version: '${default_version}'"
+  else
+    read -p "${prompt} [${default_version}]:" version_provided
+  fi
+
   new_version=${version_provided:-$default_version}
   [[ "${BRANCH_RELEASE}" ]] && new_version="${new_version}-BRANCH"
 
@@ -142,6 +314,67 @@ release::update_version() {
   sed "s/^VERSION=.*$/VERSION=${new_version}/" "${prop_file}" > "${temp_file}"
   mv "${temp_file}" "${prop_file}"
   source "${prop_file}"
+}
+
+##
+# Call all pre_release_hook scripts or functions.
+#
+# Any script present in the RELEASE_HOOK_DIR and any defined functions
+# matching the pattern
+# 'pre_release_' will be executed as:
+#    $script "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
+##
+release::pre_release_hook() {
+  release::handler_scripts 'pre_release_*' "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
+  release::handler_fns 'pre_release_' "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
+}
+
+##
+# Optionally output information about typical operation.
+#
+# This will be suppressed if not in verbose mode.
+#
+# @param $@ Informative message.
+##
+release::info() {
+  [[ -z "$RELEASE_VERBOSE" ]] || echo $@
+}
+
+##
+# Utility function to exit with a failure message.
+#
+# @param $@ Message to output before exiting.
+##
+release::die() {
+  release::error "ERROR: $@"
+  exit 1
+}
+
+##
+# Output usage information.
+#
+# Will output guidance on how to invoke this script
+# for cases where it has not been invoked usably.
+##
+release::usage() {
+  cat <<EOF
+
+Usage: $me <prop_file>
+
+prop_file
+	The name of the properties file containing the VERSION.
+
+More documentation is available in the script file itself.
+EOF
+}
+
+##
+# Utility function to echo to stderr.
+#
+# @param $@ The arguments to pass through to echo.
+##
+release::error() {
+  echo "$@" >&2
 }
 
 ##
@@ -159,125 +392,65 @@ release::update_version() {
 release::postrelease_version() {
   local -i new_micro
   let new_micro="${VERSION##*.}"+1
+
   release::update_version "Post-release version" "${VERSION%.*}.${new_micro}-SNAPSHOT"
+
   ${GIT} add "${prop_file}"
   ${GIT} commit -m "Post release version ${VERSION}"
   ${GIT} push
 }
 
 ##
-# Check whether the current git branch seems to be in-synch with its origin.
+# Execute any present handler functions baed on the provided arguments.
 #
-# This includes verifying that the current branch is master and the revisions
-# match between the peers.
+# The first paramter s the pattern or name of functions to invoke,
+# and all further parameters will be passed to the function.
 #
-# Globals:
-#   GIT
-#
-# @return 0 (success) if everything appears to be in sync,
-#         1 (failure) if there is a mismatch.
+# @param $1 Specify the name or pattern of the handler function to invoke.
+# @param $2 Provide arguments to pass to the invoked functions.
+# @return 0 Return 0 if any functions were invoked, 1 if none were found.
 ##
-release::git_is_synched() {
-  local status
-  local statuses
-  local -i synched
-
-  statuses=$(${GIT} status -sb | awk '/##/ {if ($2 != "master...origin/master") { print "NOT_MASTER" }; s[$3]=1}; {s[$1]=1} END {for (t in s) { print t}}')
-  let synched=0
-
-  for status in $statuses; do
-    case $status in
-      'NOT_MASTER')
-        release::error 'Not on master!.'
-        let synched=1
-        ;;
-      'M')
-        release::error 'Modified files exist. Commit and push change.'
-        let synched=1
-        ;;
-      '[ahead')
-        release::error 'Local git is ahead of origin. Push changes.'
-        let synched=1
-        ;;
-      '[behind')
-        release::error 'Local git is behind origin. Pull changes.'
-        let synched=1
-        ;;
-    esac
+release::handler_fns() {
+  local fn
+  local -i unfound=1
+  args="${@:2}"
+  for fn in $(compgen -A function "$1"); do
+    ${fn} ${args}
+    unfound=0
   done
-
-  return $synched
+  [[ $unfound -eq 0 ]]
 }
 
 ##
-# Call all pre_release_hook scripts.
+# Execute any present handler scripts based on the provided arguments.
 #
-# Any script present in the RELEASE_HOOK_DIR matching the pattern
-# 'pre_release_' will be executed as:
-#    $script "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
+# The first parameter is the pattern or name of scripts to invoke,
+# and all further parameters will be passed to the script.
+# If any handler script exists but fails, execution will abort
+# with that failure.
+#
+# @param $1 Specify the name or pattern of the handler scripts to execute.
+# @param $2 Provide arguments to pass to the invoked scripts.
+# @return Return 0 if any scripts were found, 1 if none were found.
 ##
-release::pre_release_hook() {
-  local script;
-  shopt -s nullglob;
-  for script in ${RELEASE_HOOK_DIR}/pre_release_*; do
-    if [[ -x "$script" ]]; then
-      "$script" "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}" || exit $?
+release::handler_scripts() {
+  local script
+  local -i unfound=1
+  shopt -s nullglob
+  args="${@:2}"
+  for script in "${RELEASE_HOOK_DIR}"/$1; do
+    if [[ -x "${script}" ]]; then
+      ${script} ${args} || exit $?
+      unfound=0
     else
       release::error "$script is not executable, skipping."
     fi
   done
   shopt -u nullglob;
+  [[ $unfound -eq 0 ]]
 }
 
-##
-# Perform a release for the application, coordinating relevant bits.
-#
-# Eveything release related will be done in this script so it's easier to
-# treat the actions as atomic and rollback/abort as necessary.
-#
-# Currently this script is not particularly robust. It should be strengthened as failure
-# scenarios are encountered.
-#
-# Globals:
-#    prop_file[in]
-#    GIT[in]
-#    BIN_DIR[in]
-#    VERSION[in,out]
-##
-release::main() {
-  local release_lock
 
-  [[ -f "${prop_file}" ]] || release::die "Build property file ${prop_file} not present".
-
-  release_lock="${prop_file}.releasing"
-  [[ -f "${release_lock}" ]] && release::die "${release_lock} already exists. Clean up previous release before continuing"
-
-  # Check to make sure git is fully synched.
-  ${GIT} remote update
-
-  [[ -n "${BRANCH_RELEASE}" ]] \
-    || release::git_is_synched \
-    || release::die 'Out of sync, aborting.'
-
-  touch "${release_lock}"
-
-  # Cut and push released version
-  release::update_version "Version to release" "${VERSION%%-*}"
-
-  release::pre_release_hook
-
-  ${GIT} add "${prop_file}"
-  ${GIT} commit -m "Update to version ${VERSION}"
-  ${GIT} tag -a "${VERSION}" -m "Release [${VERSION}]"
-  ${GIT} push origin ${VERSION}
-
-  [[ -n "${BRANCH_RELEASE}" ]] || release::postrelease_version
-
-  rm "${release_lock}"
-}
-
-release::find_deps
-source ${prop_file}
 release::main
 
 exit 0
