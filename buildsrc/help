@@ -1,0 +1,21 @@
+
+########
+buildsrc
+########
+
+************
+Common Tasks
+************
+
+make help
+	Display this help information.
+
+make check
+	Perform verification on the code in this project (requires bats).
+
+make todo
+	Display information for pending work for this project.
+
+make wiki
+	Locally check out the GitHub wiki.
+
