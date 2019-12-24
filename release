@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -e
+
+set -euo pipefail
 
 ##
 # @file release
@@ -56,7 +57,7 @@ declare -r me=$0
 # There is upcoming work to allow customization of version
 # number management.
 ##
-declare -r prop_file=$1
+declare -r prop_file=${1-}
 
 ##
 # The current version according to prop_file.
@@ -132,7 +133,7 @@ release::main() {
   release::validate_config "${release_lock}"
   source ${prop_file}
 
-  [[ -n "${BRANCH_RELEASE}" ]] \
+  [[ -n "${BRANCH_RELEASE-}" ]] \
     || release::git_is_synched \
     || release::die 'Out of sync, aborting.'
 
@@ -148,7 +149,7 @@ release::main() {
   ${GIT} tag -a "${VERSION}" -m "Release [${VERSION}]"
   ${GIT} push origin ${VERSION}
 
-  [[ -n "${BRANCH_RELEASE}" ]] || release::postrelease_version
+  [[ -n "${BRANCH_RELEASE-}" ]] || release::postrelease_version
 
   rm "${release_lock}"
 }
@@ -162,7 +163,7 @@ release::find_deps() {
   else
     release::die "git is required but cannot be found or executed!"
   fi
-  if [[ -z "${RELEASE_HOOK_DIR}" ]]; then
+  if [[ -z "${RELEASE_HOOK_DIR-}" ]]; then
     RELEASE_HOOK_DIR="$( \
       cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
     readonly RELEASE_HOOK_DIR
@@ -183,7 +184,7 @@ release::find_deps() {
 release::validate_config() {
   local release_lock=$1
 
-  [[ "${prop_file}" ]] || release::die \
+  [[ -n "${prop_file}" ]] || release::die \
     'Missing Argument' "$(release::usage)"
 
   [[ -f "${prop_file}" ]] || release::die \
@@ -256,6 +257,7 @@ release::git_is_synched() {
 #
 # If RELEASE_VERSION is specified, echoes that value.
 #
+
 # Will use the release_version handler if registered,
 # otherwise will return VERSION without a '-QUALIFIER`.
 #
@@ -267,7 +269,7 @@ release::git_is_synched() {
 release::determine_version() {
 #  release::handler_fn 'release_version' "${VERSION}" \
 #    || release::handler_scripts 'release_version' "${VERSION}" \
-  if [[ "${RELEASE_VERSION}" ]]; then
+  if [[ -n "${RELEASE_VERSION-}" ]]; then
     echo "${RELEASE_VERSION}"
   else
     echo "${VERSION%%-*}"
@@ -300,15 +302,15 @@ release::update_version() {
 
 
   # Determine new version.
-  [[ "${BRANCH_RELEASE}" ]] && prompt="(BRANCH) $prompt"
-  if [[ "${AUTO_VERSION}" ]]; then
+  [[ -n "${BRANCH_RELEASE-}" ]] && prompt="(BRANCH) $prompt"
+  if [[ -n "${AUTO_VERSION-}" ]]; then
     release::info "Releasing version: '${default_version}'"
   else
     read -p "${prompt} [${default_version}]:" version_provided
   fi
 
   new_version=${version_provided:-$default_version}
-  [[ "${BRANCH_RELEASE}" ]] && new_version="${new_version}-BRANCH"
+  [[ -n "${BRANCH_RELEASE-}" ]] && new_version="${new_version}-BRANCH"
 
   # Update and source prop_file.
   sed "s/^VERSION=.*$/VERSION=${new_version}/" "${prop_file}" > "${temp_file}"
@@ -322,11 +324,11 @@ release::update_version() {
 # Any script present in the RELEASE_HOOK_DIR and any defined functions
 # matching the pattern
 # 'pre_release_' will be executed as:
-#    $script "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
+#    $script "${prop_file}" "${VERSION}" "${BRANCH_RELEASE-}"
 ##
 release::pre_release_hook() {
-  release::handler_scripts 'pre_release_*' "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
-  release::handler_fns 'pre_release_' "${prop_file}" "${VERSION}" "${BRANCH_RELEASE}"
+  release::handler_scripts 'pre_release_*' "${prop_file}" "${VERSION}" "${BRANCH_RELEASE-}"
+  release::handler_fns 'pre_release_' "${prop_file}" "${VERSION}" "${BRANCH_RELEASE-}"
 }
 
 ##
@@ -337,7 +339,7 @@ release::pre_release_hook() {
 # @param $@ Informative message.
 ##
 release::info() {
-  [[ -z "$RELEASE_VERBOSE" ]] || echo $@
+  [[ -z "${RELEASE_VERBOSE-}" ]] || echo $@
 }
 
 ##
@@ -449,7 +451,6 @@ release::handler_scripts() {
   shopt -u nullglob;
   [[ $unfound -eq 0 ]]
 }
-
 
 release::main
 
