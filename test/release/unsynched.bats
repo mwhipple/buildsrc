@@ -4,18 +4,21 @@ load test_helper
 
 @test 'When untracked files exist, return failure status.' {
   in_test_dir 'untracked'
+  echo 'VERSION=1.0-SNAPSHOT' > build.properties
   init_with_origin 'untracked_origin'
-  touch build.properties
+  touch 'untracked'
   run ./release build.properties
   (( "${status}" != 0 ))
 }
 
 @test 'When untracked files exist, output a fitting message.' {
   in_test_dir 'untracked'
+  echo 'VERSION=1.0-SNAPSHOT' > build.properties
   init_with_origin 'untracked_origin'
-  touch build.properties
-  run ./release build.properties
-  [[ "${output}" =~ Modified ]]
+  touch 'untracked'
+  AUTO_VERSION=true run ./release build.properties
+  git status > /buildsrc/build/tmp/status
+  [[ "${output}" =~ Untracked ]]
   [[ "${output}" =~ Out\ of\ sync ]]
 }
 
@@ -40,16 +43,20 @@ load test_helper
 
 @test 'With unstaged modifications, return failure status.' {
   in_test_dir 'unstaged'
-  touch build.properties
+  echo 'VERSION=1.0-SNAPSHOT' > build.properties
+  touch modified
   init_with_origin 'unstaged_origin'
+  echo 'updated' > modified
   run ./release build.properties
   (( "${status}" != 0 ))
 }
 
 @test 'With unstaged modifications, output a fitting message.' {
   in_test_dir 'unstaged'
-  touch build.properties
+  echo 'VERSION=1.0-SNAPSHOT' > build.properties
+  touch modified
   init_with_origin 'unstaged_origin'
+  echo 'updated' > modified
   run ./release build.properties
   [[ "${output}" =~ Modified ]]
   [[ "${output}" =~ Out\ of\ sync ]]
@@ -104,4 +111,3 @@ load test_helper
   [[ "${output}" =~ behind\ origin ]]
   [[ "${output}" =~ Out\ of\ sync ]]
 }
-

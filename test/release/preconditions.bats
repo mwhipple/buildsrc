@@ -95,3 +95,19 @@ load test_helper
   run ./release build.properties
   [[ "${output}" =~ git\ repository ]]
 }
+
+@test 'When VERSION is not set, return failure status.' {
+  in_test_dir 'no_version'
+  touch build.properties
+  init_with_origin 'no_version_origin'
+  run ./release build.properties
+  (( "${status}" != 0 ))
+}
+
+@test 'When VERSION is not set, output a fitting message.' {
+  in_test_dir 'no_version'
+  touch build.properties
+  init_with_origin 'no_version_origin'
+  run ./release build.properties
+  [[ "${output}" =~ VERSION ]]
+}

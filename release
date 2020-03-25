@@ -238,6 +238,10 @@ release::git_is_synched() {
         release::error 'Modified files exist. Commit and push change.'
         (( synched=1 ))
         ;;
+      '??')
+        release::error 'Untracked files exist. Commit and push change.'
+        (( synched=1 ))
+        ;;
       '[ahead')
         release::error 'Local git is ahead of origin. Push changes.'
         (( synched=1 ))
