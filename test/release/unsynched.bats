@@ -17,7 +17,6 @@ load test_helper
   init_with_origin 'untracked_origin'
   touch 'untracked'
   AUTO_VERSION=true run ./release build.properties
-  git status > /buildsrc/build/tmp/status
   [[ "${output}" =~ Untracked ]]
   [[ "${output}" =~ Out\ of\ sync ]]
 }

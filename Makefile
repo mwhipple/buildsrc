@@ -22,7 +22,9 @@ ${WIKI_DIR}: ; git clone ${REPO_SSH_ROOT}.wiki.git $@
 
 .PHONY: help todo
 
-check: ; ${BATS} -r ${TEST_DIR}
+check: export TEST_LOG=$(abspath ${TMP_DIR})/log
+check: | ${TMP_DIR}
+	${BATS} -r ${TEST_DIR}
 
 TEST_TAG := bats_w_git:latest
 
@@ -33,6 +35,7 @@ ${TEST_IMAGE}: ${TEST_DIR}Dockerfile | ${BUILD_DIR}
 		--file=$< \
 		.
 
+docker-check: export TEST_LOG=/buildsrc/${TMP_DIR}log
 docker-check: ${TEST_IMAGE} | ${TMP_DIR}
 	${DOCKER} run \
 		-u bats \

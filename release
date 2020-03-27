@@ -40,12 +40,12 @@ set -euo pipefail
 ##
 
 ##
-# Alias for the name used to invoke this script.
+# Define an alias for the name used to invoke this script.
 ##
 declare -r me=$0
 
 ##
-# The properties file which contains the version to release.
+# Specify the properties file which contains the version to release.
 #
 # This file should contain a line similar to:
 # VERSION=1.0.0-SNAPSHOT
@@ -60,33 +60,35 @@ declare -r me=$0
 declare -r prop_file=${1-}
 
 ##
-# The current version according to prop_file.
+# Define the current version according to prop_file.
 #
 # This will normally be provided by sourcing/including PROP_FILE.
 ##
 declare VERSION
 
 ##
-# If true then the default versions will be used without prompting.
+# Use default versions without prompting if this is true.
 ##
 declare -r AUTO_VERSION
 
 ##
-# If specified then use this as the version to release.
+# Explicitly/eagerly provide the version to release.
 #
 # This will ignore the value currently in build.properties.
 ##
 declare -r RELEASE_VERSION
 
 ##
-# The git executable to call. If not already set will look on the path.
+# Specify the git executable to call.
+#
+# If this is not already set the path will be searched.
 ##
 declare GIT
 
 ##
-# (Optional) Where hook scripts are located.
+# (Optional) Specify where hook scripts are located.
 #
-# Defaults to directory of release script.
+# This defaults to the directory of release script.
 #
 # Hook scripts allow for plugging in functionality to the release flow.
 # Currently supported hook is:
@@ -95,7 +97,7 @@ declare GIT
 declare RELEASE_HOOK_DIR
 
 ##
-# (Optional) Whether to output additional information.
+# (Optional) Indicate whether to output additional information.
 #
 # If passed, then this script will be chatty,
 # otherwise silence implies success.
@@ -103,12 +105,32 @@ declare RELEASE_HOOK_DIR
 declare -r RELEASE_VERBOSE
 
 ##
-# (Optional) Whether this is a release from a branch.
+# (Optional) Indicate whether this is a release from a branch.
 #
 # Branch releases may be less restrictive
 # but also mark themselves more loudly.
 ##
 declare -r BRANCH_RELEASE
+
+##
+# (Optional) Specfy the primary branch from which releases will be cut.
+#
+# If the working directory is not on this branch and synchronized then
+# any non-branch release will fail.
+#
+# This defaults to `master`.
+##
+declare -r RELEASE_MASTER=${RELEASE_MASTER:-master}
+
+##
+# (Optional) Specfy the primary remotes to which releases will be pushed.
+#
+# If the working directory is not synchronized with this remote
+# then any non-branch release will fail.
+#
+# This defaults to `origin`.
+##
+declare -r RELEASE_REMOTE=${RELEASE_REMOTE:-origin}
 
 ##
 # Perform a release for the application, coordinating relevant bits.
@@ -147,7 +169,7 @@ release::main() {
   ${GIT} add "${prop_file}"
   ${GIT} commit -m "Update to version ${VERSION}"
   ${GIT} tag -a "${VERSION}" -m "Release [${VERSION}]"
-  ${GIT} push origin ${VERSION}
+  ${GIT} push ${RELEASE_REMOTE} ${VERSION}
 
   [[ -n "${BRANCH_RELEASE-}" ]] || release::postrelease_version
 
@@ -219,13 +241,16 @@ release::git_is_synched() {
   # Make sure to have an up-to-date view of origin.
   ${GIT} remote update
 
-  statuses=$(${GIT} status -sb | awk \
-    '/##/ { \
-      if ($2 != "master...origin/master") { print "NOT_MASTER" }; \
-      s[$3]=1 \
-    }; \
-    {s[$1]=1} \
-    END {for (t in s) { print t}}')
+  set -x
+  statuses=$(${GIT} status -sb | awk -v master="${RELEASE_MASTER}" \
+				     -v remote="${RELEASE_REMOTE}" \
+				     '/##/ { \
+  if ($2 != sprintf("%s...%s/%s", master, remote, master)) { print "NOT_MASTER" }; \
+  s[$3]=1 \
+}; \
+{s[$1]=1} \
+END {for (t in s) { print t}}
+')
   (( synched=0 ))
 
   for status in $statuses; do
@@ -254,6 +279,17 @@ release::git_is_synched() {
   done
 
   return $synched
+}
+
+##
+# Produce an awk script which will verify the current upstream.
+#
+# This primarily serves to wrap the script up into a heredoc
+# which supports less escape-y interpolation.
+##
+release::awk_upstream_check() {
+    cat <<EOF
+EOF
 }
 
 ##

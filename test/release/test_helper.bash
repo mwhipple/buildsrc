@@ -3,6 +3,10 @@ readonly release_src="${BATS_TEST_DIRNAME}/../../release"
 MY_TMPDIR="${BATS_TMPDIR}/$$"
 MY_VERSION='1.0'
 
+debug() {
+    echo "$@" >> "${TEST_LOG}"
+}
+
 in_test_dir() {
   local work_dir="${MY_TMPDIR}/$1"
   mkdir -p "${work_dir}"
