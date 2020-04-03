@@ -1,4 +1,5 @@
-readonly release_src="${BATS_TEST_DIRNAME}/../../release"
+readonly release_src_dir="${BATS_TEST_DIRNAME}/../../"
+readonly release_src="${release_src_dir}release"
 
 MY_TMPDIR="${BATS_TMPDIR}/$$"
 MY_VERSION='1.0'
