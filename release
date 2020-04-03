@@ -18,7 +18,7 @@ set -euo pipefail
 ##
 
 #-------------------------------------------------------------------------
-# Copyright 2019 Brightcove
+# Copyright 2020 Brightcove
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -297,23 +297,52 @@ EOF
 #
 # If RELEASE_VERSION is specified, echoes that value.
 #
-
-# Will use the release_version handler if registered,
-# otherwise will return VERSION without a '-QUALIFIER`.
+# Use release_version handler if registered,
+# otherwise return VERSION without a '-QUALIFIER`.
 #
 # If such a handler is installed it will be passed
 # VERSION as an argument and should write the version
 # to release to stdout (and that should be the only output
 # of the handler).
+#
+# A function takes precedence over a script.
+# release_version is technically a prefix and so there could
+# presumably be multiple matching handlers but this is
+# not supported/produces undefined behavior.
 ##
 release::determine_version() {
-#  release::handler_fn 'release_version' "${VERSION}" \
-#    || release::handler_scripts 'release_version' "${VERSION}" \
   if [[ -n "${RELEASE_VERSION-}" ]]; then
     echo "${RELEASE_VERSION}"
   else
-    echo "${VERSION%%-*}"
+    release::handler_fns 'release_version' "${VERSION}" \
+      || release::handler_scripts 'release_version' "${VERSION}" \
+      || echo "${VERSION%%-*}"
   fi
+}
+
+##
+# Output the version to commit after the release (to be captured).
+#
+# Use release_postversion handler if registered,
+# otherwise increment the last number in VERSION and add '-SNAPSHOT`.
+#
+# If such a handler is installed it will be passed VERSION
+# as an argument and should write the post release version to stdout
+# (and that should be the only output of the handler).
+#
+# A function takes precedence over a script.
+# release_postversion is technically a prefix and so there could
+# presumably be multiple matching handlers but this is
+# not supported/produces undefined behavior.
+
+##
+release::determine_postrelease_version() {
+    if ! (release::handler_fns 'release_postversion' "${VERSION}" \
+	      || release::handler_scripts 'release_postversion' "${VERSION}"); then
+	local -i new_micro
+	((new_micro="${VERSION##*.}" + 1))
+	echo "${VERSION%.*}.${new_micro}-SNAPSHOT"
+    fi
 }
 
 ##
@@ -432,10 +461,7 @@ release::error() {
 #   GIT[in]
 ##
 release::postrelease_version() {
-  local -i new_micro
-  let new_micro="${VERSION##*.}"+1
-
-  release::update_version "Post-release version" "${VERSION%.*}.${new_micro}-SNAPSHOT"
+  release::update_version "Post-release version" "$(release::determine_postrelease_version)"
 
   ${GIT} add "${prop_file}"
   ${GIT} commit -m "Post release version ${VERSION}"
