@@ -3,6 +3,11 @@
 #
 # To use this strategy the file should be sourced and
 # the functions exported as necessary.
+# For example:
+#   . buildsrc/date_version.sh && \
+#       export -f release_version && \
+#       export -f release_postversion && \
+#       ./buildsrc/release build.properties
 #
 # While version numbers make sense for anything offering
 # for which there are likely to be multiple active versions and
