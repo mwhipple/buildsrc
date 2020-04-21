@@ -525,6 +525,10 @@ exit 0
 ##
 # CHANGELOG
 #
+# 1.2.0
+# ------
+# - Provide version strategy hooks.
+#
 # 1.1.0
 # ------
 # - Take prop file as argument, drop proj dir
