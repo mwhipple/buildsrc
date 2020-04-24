@@ -241,7 +241,6 @@ release::git_is_synched() {
   # Make sure to have an up-to-date view of origin.
   ${GIT} remote update
 
-  set -x
   statuses=$(${GIT} status -sb | awk -v master="${RELEASE_MASTER}" \
 				     -v remote="${RELEASE_REMOTE}" \
 				     '/##/ { \
