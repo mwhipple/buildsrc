@@ -9,10 +9,11 @@ set -euo pipefail
 # A release primarily consists of creating a git tag for the version
 # and recording the version in a properties file passed as an argument.
 #
+# @author Matt Whipple
 # @author Brightcove
 # @copyright Apache License, Version 2.0
-# @version 1.1.0
-# source_repository https://github.com/brightcove/buildsrc
+# @version 1.2.0
+# source_repository https://github.com/mwhipple/buildsrc
 #
 # @param $1 The path to the properties file where the version is stored.
 ##
